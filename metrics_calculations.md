@@ -1,6 +1,7 @@
 # Metrics calculations
 
-This document describes how the metric outputs are derived from the coalesced product table.
+This document describes how the metric outputs are derived from a coalesced product table
+using `metric.compute_metrics` (the same logic used by `getting-metric.py`).
 
 ## Inputs
 
