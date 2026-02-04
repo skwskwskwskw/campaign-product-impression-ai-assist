@@ -105,7 +105,11 @@ def get_optimal_workers(task_type: str = "io") -> int:
 
 def memory_monitor():
     """Monitor memory usage and trigger garbage collection if needed."""
-    import psutil
+    try:
+        import psutil
+    except ImportError:
+        logging.warning("psutil is not installed; skipping memory usage checks.")
+        return
     import os
 
     process = psutil.Process(os.getpid())
