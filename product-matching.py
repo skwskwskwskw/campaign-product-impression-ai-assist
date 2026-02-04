@@ -601,7 +601,7 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
     debug_rows.to_parquet(os.path.join(results_dir, 'debug_rows.parquet'))
 
     metrics_output_dir = os.path.join(results_dir, "metric-output")
-    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv",))
+    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv", "parquet"))
 
     logging.info(f"Results saved to {results_dir}/")
     logging.info("Files created:")
@@ -732,7 +732,7 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
     debug_rows.to_parquet(os.path.join(results_dir, 'debug_rows.parquet'))
 
     metrics_output_dir = os.path.join(results_dir, "metric-output")
-    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv",))
+    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv", "parquet"))
 
     logging.info(f"Results saved to {results_dir}/")
     logging.info("Files created:")
