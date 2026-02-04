@@ -253,6 +253,7 @@ def coalesce_metrics(
     coalesced_df, temp_df = coalesce_products_base_country_supplement_robust(
         df_metrics_by_products[df_metrics_by_products.timestamp >= cutoff],
         df_metrics_by_country[df_metrics_by_country.timestamp >= cutoff],
+        include_country_code=False,
     )
 
     return coalesced_df, temp_df

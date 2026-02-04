@@ -66,6 +66,7 @@ def coalesce_products_base_country_supplement_robust(
     df_country: pd.DataFrame,
     residual_product_id="__unmapped__",
     tol=1e-9,
+    include_country_code: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Robust coalescing of product and country metrics with validation.
@@ -75,6 +76,7 @@ def coalesce_products_base_country_supplement_robust(
         df_country: Country metrics DataFrame
         residual_product_id: ID to assign to unmapped records
         tol: Tolerance for floating point comparisons
+        include_country_code: Whether to include countryCode in matching grain
 
     Returns:
         Tuple of (coalesced DataFrame, orphaned products DataFrame)
@@ -92,10 +94,11 @@ def coalesce_products_base_country_supplement_robust(
             if m in df.columns:
                 df[m] = pd.to_numeric(df.get(m, 0), errors="coerce").fillna(0.0)
 
+    base_grain = FULL_GRAIN if include_country_code else [c for c in FULL_GRAIN if c != "countryCode"]
     grains = [
-        FULL_GRAIN,
-        [c for c in FULL_GRAIN if c != "adId"],
-        [c for c in FULL_GRAIN if c not in ("adId", "adSetId")],
+        base_grain,
+        [c for c in base_grain if c != "adId"],
+        [c for c in base_grain if c not in ("adId", "adSetId")],
     ]
 
     # Track which products matched at which grain
