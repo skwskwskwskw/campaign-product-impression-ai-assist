@@ -4,22 +4,30 @@ This document describes how the metric outputs are derived from the coalesced pr
 
 ## Inputs
 
-The metrics pipeline expects a coalesced product table with (at minimum) the following columns after normalization:
+The metrics pipeline starts with a coalesced product table and applies a column mapping step.
+By default, the mapping looks for common column names (e.g., `timestamp` → `date`,
+`main_product_flag` → `isLead`, `conversionsValue` → `grossProfit`), and it can be overridden
+when calling `compute_metrics()` or `getting-metric.py`.
 
-- `date` (from `date`/`timestamp`)
+After normalization, the pipeline expects these **required** columns:
+
+- `date` (or `timestamp`, which is converted to `date`)
 - `platform`
-- `campaignId`, `campaignName`
-- `adSetId`, `adSetName`
-- `adId`, `adName`
-- `productId`
-- `productGroupId`, `productGroupName`
-- `productName`
-- `spend`, `impressions`, `clicks`
-- `conversionsValue` (treated as gross profit / revenue)
-- `main_product_flag` (used as lead indicator)
-- Optional weight column (`sku_weight`, `quantity`, `conversions`, `clicks`, `impressions`, or `spend`)
+- `campaignId`
+- `adSetId`
+- `adId`
+- `productId` (or `productId_`)
 
-If a column is missing, it is filled with zeroes or empty strings during normalization.
+These columns are **optional but supported** (defaults filled if missing):
+
+- `campaignName`, `adSetName`, `adName`
+- `productGroupId`, `productGroupName`, `productName`
+- `spend`, `impressions`, `clicks`, `interactions`, `conversions`
+- A profit column (default `grossProfit`, but `conversionsValue` is commonly used)
+- A lead indicator column (`isLead` or `main_product_flag`)
+- An allocation weight column (see weight selection below)
+
+If an optional column is missing, it is filled with zeroes or empty strings during normalization.
 
 ## Normalization
 
@@ -28,10 +36,15 @@ If a column is missing, it is filled with zeroes or empty strings during normali
 2. **Identifiers**
    - All IDs (`campaignId`, `adSetId`, `adId`, `productId`, `productGroupId`) are cast to strings.
 3. **Metrics**
-   - Numeric metrics (`spend`, `impressions`, `clicks`, `grossProfit`) are coerced to numbers and missing values become `0`.
+   - Numeric metrics (`spend`, `impressions`, `clicks`, `interactions`, `conversions`, `grossProfit`)
+     are coerced to numbers and missing values become `0`.
 4. **Lead flag**
-   - `isLead` is derived from `main_product_flag` (or `isLead` if present). Valid truthy values: `1`, `true`, `yes`.
-5. **Weight**
+   - `isLead` is derived from `lead_col` (if provided), otherwise `isLead`, otherwise
+     `main_product_flag` (via the column map). Valid truthy values: `1`, `true`, `yes`.
+5. **Profit column**
+   - `grossProfit` is populated from the configured profit column (default `grossProfit`;
+     `getting-metric.py` uses `conversionsValue` by default).
+6. **Weight**
    - `sku_weight` is selected from the first available column in this order:
      1. `sku_weight`
      2. `quantity`

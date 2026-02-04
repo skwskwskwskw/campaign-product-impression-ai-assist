@@ -1,6 +1,7 @@
 # Simple Ad-Product Attribution Pipeline
 
-A simplified, easy-to-understand pipeline for identifying which products each ad is targeting and measuring spillover effects.
+A simplified, easy-to-understand pipeline for identifying which products each ad is targeting
+and measuring spillover effects using product-level metrics.
 
 ## Overview
 
@@ -24,7 +25,7 @@ For each **campaignId/adSetId/adId**, this pipeline determines:
 
 ```bash
 # From parquet files:
-python -m simple.run_pipeline --from-parquet ./data --output-dir ./results
+python -m simple.run_pipeline --from-parquet ./data --output-dir ./results --format both
 
 # From ClickHouse:
 python -m simple.run_pipeline --website-id YOUR_WEBSITE_ID \
@@ -34,7 +35,7 @@ python -m simple.run_pipeline --website-id YOUR_WEBSITE_ID \
 ### From Python
 
 ```python
-from simple import PipelineConfig, AdProductMatcher, compute_all_metrics
+from simple import PipelineConfig, AdProductMatcher, compute_all_metrics, compute_summary_kpis
 import pandas as pd
 
 # 1. Configure
@@ -58,10 +59,12 @@ metrics_with_flags = matcher.flag_lead_products(targeting, metrics_df)
 
 # 5. Compute allocated metrics
 results = compute_all_metrics(metrics_with_flags)
+summary = compute_summary_kpis(results.sku_allocation)
 
 # 6. Access results
 print(results.sku_allocation.head())  # Product-level allocations
 print(results.ad_data.head())         # Ad-level totals
+print(summary.head())                 # Campaign KPIs
 ```
 
 ## Input Data Requirements
@@ -91,7 +94,7 @@ print(results.ad_data.head())         # Ad-level totals
 | `campaignId` | Yes | Campaign identifier |
 | `adSetId` | Yes | Ad set identifier |
 | `adId` | Yes | Ad identifier |
-| `productGroupId` | Yes | Product being attributed |
+| `productGroupId` or `productId` | Yes | Product being attributed |
 | `spend` | Yes | Ad spend |
 | `impressions` | Yes | Ad impressions |
 | `conversions` | No | Conversion count |
@@ -113,6 +116,15 @@ Product-level metrics with both fair and lead-only allocations.
 date, productId, campaignId, adSetId, adId, isLead,
 spend_fair, impressions_fair, gross_profit_fair,
 spend_lead_only, impressions_lead_only, gross_profit_lead_only
+```
+
+### sku_performance.csv/parquet
+Aggregated product performance across all ads.
+
+```
+date, productId, sku_spend_fair, sku_impressions_fair, sku_clicks_fair,
+sku_gross_profit_fair, sku_spend_lead_only, sku_impressions_lead_only,
+sku_clicks_lead_only, sku_gross_profit_lead_only
 ```
 
 ### campaign_summary.csv/parquet
@@ -162,6 +174,11 @@ PipelineConfig(
     # Output
     output_dir="./results",
     output_formats=["csv", "parquet"],
+
+    # ClickHouse (optional)
+    start_date="2025-10-01",
+    end_date="2025-12-31",
+    use_aws_secrets=True,
 )
 ```
 
@@ -207,7 +224,7 @@ simple/
 - Lower `max_products_per_ad`
 
 ### Missing metrics
-- Ensure `productGroupId` exists in metrics
+- Ensure `productGroupId` or `productId` exists in metrics
 - Check date range includes your data
 
 ## Dependencies
@@ -215,3 +232,5 @@ simple/
 - pandas >= 1.0
 - numpy >= 1.19
 - rapidfuzz >= 2.0 (optional, falls back to difflib)
+- clickhouse-connect >= 0.7 (optional, for ClickHouse ingestion)
+- boto3 >= 1.28 (optional, for AWS Secrets Manager credentials)
