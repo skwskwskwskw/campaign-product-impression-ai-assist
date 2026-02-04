@@ -31,9 +31,20 @@ ENV/
 *.swp
 *.swo
 
-# Generated data (can be recreated with scripts/generate_sample_data.py)
-data/
+# Generated outputs (recreated by pipeline)
 results/
+
+# Sample data (recreated by scripts/generate_sample_data.py)
+data/
+
+# Raw parquet files from ClickHouse (can be large)
+websites.parquet
+df_ads_ori.parquet
+df_prod.parquet
+df_prod_group.parquet
+df_metrics.parquet
+df_metrics_by_country.parquet
+df_metrics_by_products.parquet
 
 # Logs
 *.log
@@ -41,3 +52,9 @@ results/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Pickle files
+*.pkl
