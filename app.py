@@ -190,6 +190,9 @@ required_cols = [
     "gross_profit_lead_only", "spend_lead_only", "impressions_lead_only",
 ]
 
+# Optional columns (will be created if missing)
+optional_cols = ["match_stage"]
+
 if df.empty:
     st.info("Upload a CSV/Parquet to start. Column names must match your output schema.")
     st.stop()
@@ -201,6 +204,12 @@ if missing:
 
 df = coerce_date(df, "date")
 df["isLead_norm"] = normalize_is_lead(df["isLead"])
+
+# Handle optional match_stage column (for confidence tracking of product group match)
+if "match_stage" not in df.columns:
+    df["match_stage"] = "unmatched"
+else:
+    df["match_stage"] = df["match_stage"].fillna("unmatched").astype(str)
 
 # ----------------------------
 # Sidebar filters (after load)
@@ -228,6 +237,15 @@ with st.sidebar:
 
     islead_sel = st.multiselect("isLead (0/1)", [0, 1], default=[0, 1])
 
+    # Match stage filter (confidence of product group match)
+    match_stages_all = sorted([s for s in df["match_stage"].dropna().unique().tolist()])
+    match_stage_sel = st.multiselect(
+        "Match stage (confidence)",
+        match_stages_all,
+        default=match_stages_all,
+        help="Filter by product-ad match confidence: exact_url (highest) > exact_product > fuzzy > token_overlap > unmatched (halo)"
+    )
+
     remove_null_campaign = st.checkbox("Remove NULL/blank campaignName", value=True)
     
 # Apply filters
@@ -245,6 +263,8 @@ if pg_sel:
     df_f = df_f[df_f["productGroupName"].isin(pg_sel)]
 if islead_sel:
     df_f = df_f[df_f["isLead_norm"].isin(islead_sel)]
+if match_stage_sel:
+    df_f = df_f[df_f["match_stage"].isin(match_stage_sel)]
 
 if remove_null_campaign:
     df_f = df_f[df_f["campaignName"].notna()]
@@ -340,6 +360,7 @@ dims = st.multiselect(
         "adId", "adName",
         "productGroupName",
         "productName" if include_product_name else None,
+        "match_stage",
     ],
     default=[d for d in default_dims if d is not None],
     key="leader_dims"
@@ -773,6 +794,7 @@ waste_dims = st.multiselect(
         "adId", "adName",
         "productGroupName",
         "productName" if include_product_name else None,
+        "match_stage",
     ],
     default=[d for d in default_waste_dims if d is not None and 'product' not in d],
     key="waste_dims"

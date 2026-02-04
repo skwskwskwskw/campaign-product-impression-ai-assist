@@ -459,7 +459,7 @@ class AdProductMatcher:
         product_id_col: str = "productGroupId"
     ) -> pd.DataFrame:
         """
-        Add isLead flag to metrics DataFrame based on targeting.
+        Add isLead flag and match_stage to metrics DataFrame based on targeting.
 
         Args:
             targeting_df: Result from build_targeting_table()
@@ -468,11 +468,13 @@ class AdProductMatcher:
 
         Returns:
             metrics_df with added 'isLead' column (1 = lead, 0 = halo)
+            and 'match_stage' column (exact_url, exact_product, fuzzy, token_overlap, unmatched)
         """
         self.logger.info("Flagging lead products in metrics")
 
         result = metrics_df.copy()
         result["isLead"] = 0
+        result["match_stage"] = "unmatched"
 
         if targeting_df.empty or metrics_df.empty:
             return result
@@ -489,20 +491,27 @@ class AdProductMatcher:
         targeting_exp = targeting_exp.explode("productGroupIds_targeted")
         targeting_exp = targeting_exp.rename(columns={"productGroupIds_targeted": product_id_col})
 
-        # Get unique (ad, product) pairs that are leads
+        # Get unique (ad, product, match_stage) pairs that are leads
         lead_keys = targeting_exp[
-            ["campaignId", "adSetId", "adId", product_id_col]
+            ["campaignId", "adSetId", "adId", product_id_col, "match_stage"]
         ].drop_duplicates()
 
-        # Merge to identify leads
+        # Merge to identify leads and propagate match_stage
         merged = result.merge(
             lead_keys,
             on=["campaignId", "adSetId", "adId", product_id_col],
             how="left",
-            indicator=True
+            indicator=True,
+            suffixes=("", "_from_targeting")
         )
 
         result["isLead"] = (merged["_merge"] == "both").astype(int)
+        # Use match_stage from targeting for leads, keep "unmatched" for halo products
+        result["match_stage"] = np.where(
+            merged["_merge"] == "both",
+            merged["match_stage_from_targeting"].fillna("unmatched"),
+            "unmatched"
+        )
 
         lead_count = result["isLead"].sum()
         self.logger.info(f"Flagged {lead_count} lead product rows out of {len(result)} total")

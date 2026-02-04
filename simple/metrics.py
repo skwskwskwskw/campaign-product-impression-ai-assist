@@ -179,11 +179,17 @@ def compute_all_metrics(
         else:
             data["sku_weight"] = 1.0
 
+    # Match stage column (for tracking confidence of product group match)
+    if "match_stage" not in data.columns:
+        data["match_stage"] = "unmatched"
+    else:
+        data["match_stage"] = data["match_stage"].fillna("unmatched").astype(str)
+
     # === Aggregate to (date, ad, product) level ===
     dims = [
         "date", "productId", "productGroupId", "productGroupName", "productName",
         "platform", "campaignId", "campaignName", "adSetId", "adSetName",
-        "adId", "adName", "isLead"
+        "adId", "adName", "isLead", "match_stage"
     ]
     dims = [d for d in dims if d in data.columns]
 
@@ -231,7 +237,7 @@ def compute_all_metrics(
     sku_alloc_cols = [
         "date", "productId", "productGroupId", "productGroupName", "productName",
         "platform", "campaignId", "campaignName", "adSetId", "adSetName",
-        "adId", "adName", "isLead", "sku_weight", "share",
+        "adId", "adName", "isLead", "match_stage", "sku_weight", "share",
         "gross_profit_fair", "spend_fair", "impressions_fair", "clicks_fair",
         "gross_profit_lead_only", "spend_lead_only", "impressions_lead_only", "clicks_lead_only",
     ]
