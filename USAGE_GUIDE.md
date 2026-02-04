@@ -9,7 +9,9 @@ This guide explains how to create the data and use the Streamlit dashboard (`app
 1. [Overview](#overview)
 2. [Creating the Data](#creating-the-data)
    - [Option A: Using the Simple Pipeline](#option-a-using-the-simple-pipeline-recommended)
-   - [Option B: Preparing Data Manually](#option-b-preparing-data-manually)
+   - [Option B: Using the Metric-Only Pipeline](#option-b-using-the-metric-only-pipeline)
+   - [Option C: Using the Full Product-Matching Pipeline](#option-c-using-the-full-product-matching-pipeline)
+   - [Option D: Preparing Data Manually](#option-d-preparing-data-manually)
 3. [Using the Dashboard (app.py)](#using-the-dashboard-apppy)
 4. [Data Schema Reference](#data-schema-reference)
 5. [Troubleshooting](#troubleshooting)
@@ -27,7 +29,7 @@ This platform helps you:
 
 ## Creating the Data
 
-You have two options for creating the data that `app.py` requires.
+You have four options for creating the data that `app.py` requires.
 
 ### Option A: Using the Simple Pipeline (Recommended)
 
@@ -62,7 +64,7 @@ You need three input files in Parquet or CSV format:
 | `campaignId` | Yes | Campaign identifier |
 | `adSetId` | Yes | Ad set identifier |
 | `adId` | Yes | Ad identifier |
-| `productGroupId` | Yes | Product being attributed |
+| `productGroupId` or `productId` | Yes | Product being attributed |
 | `spend` | Yes | Ad spend |
 | `impressions` | Yes | Ad impressions |
 | `date` | No | Date of the metrics |
@@ -115,7 +117,72 @@ The pipeline generates `sku_allocation.csv/parquet` which is ready for `app.py`.
 
 ---
 
-### Option B: Preparing Data Manually
+### Option B: Using the Metric-Only Pipeline
+
+If you already have a **coalesced product table** (one row per product per ad per day),
+use the metric pipeline to allocate ad totals and produce the same `sku_allocation` output
+that `app.py` expects.
+
+#### Step 1: Prepare a Coalesced Product Table
+
+This table must include:
+- `date` or `timestamp`
+- `platform`, `campaignId`, `adSetId`, `adId`
+- `productId` (or `productId_`)
+
+Optional columns such as `productGroupId`, `productGroupName`, `productName`, `spend`,
+`impressions`, `clicks`, `conversions`, `grossProfit`, and `isLead` are supported and will
+be normalized if present.
+
+#### Step 2: Run the Metric Pipeline
+
+```bash
+python getting-metric.py --input ./data/coalesced_df.parquet --output-dir ./results --formats csv,parquet
+```
+
+By default, `getting-metric.py` uses `conversionsValue` as the profit column. Override with:
+
+```bash
+python getting-metric.py --input ./data/coalesced_df.parquet --profit-col grossProfit
+```
+
+The output `results/sku_allocation.csv/parquet` can be uploaded directly into `app.py`.
+
+---
+
+### Option C: Using the Full Product-Matching Pipeline
+
+If you want end-to-end attribution (ads → product groups → metrics), run the full
+product-matching workflow.
+
+#### Step 1: Ensure Input Parquet Files Exist
+
+`product-matching.py` expects these files in the repo root:
+
+- `websites.parquet`
+- `df_ads_ori.parquet`
+- `df_prod.parquet`
+- `df_prod_group.parquet`
+- `df_metrics.parquet`
+- `df_metrics_by_country.parquet`
+- `df_metrics_by_products.parquet`
+
+#### Step 2: Run the Workflow
+
+```bash
+python product-matching.py
+```
+
+Outputs are written to `results/`, including:
+- `results/final_targeting.parquet`
+- `results/coalesced_df_with_flags.parquet`
+- `results/metric-output/sku_allocation.csv/parquet`
+
+Use `results/metric-output/sku_allocation.*` as the input for `app.py`.
+
+---
+
+### Option D: Preparing Data Manually
 
 If you already have your own attribution data, you can create a CSV/Parquet file directly.
 
@@ -148,6 +215,7 @@ Your file **must** contain these columns:
 | Column | Type | Description |
 |--------|------|-------------|
 | `match_stage` | string | Match confidence: `exact_url`, `exact_product`, `fuzzy`, `token_overlap`, `unmatched` |
+| `productId` | string | Optional SKU/product identifier |
 
 #### Example Data
 
@@ -274,6 +342,11 @@ Ensure your file has ALL required columns listed in [Required Columns](#required
 - Lower `fuzzy_threshold` (try 70-80)
 - Check that product URLs/names are populated
 - Verify `websiteId` matches between ads and products
+
+### Product-matching workflow cannot find parquet files
+
+- Confirm the parquet files listed in [Option C](#option-c-using-the-full-product-matching-pipeline) exist
+- Run the notebook or upstream export that generates the parquet files
 
 ### Dashboard shows "No rows after filters"
 
