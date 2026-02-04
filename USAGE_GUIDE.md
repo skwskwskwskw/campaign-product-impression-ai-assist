@@ -299,7 +299,45 @@ Place these 7 files in the repository root:
 | `df_metrics_by_country.parquet` | Country-level metrics | `adId`, `country`, `spend`, `impressions` |
 | `df_metrics_by_products.parquet` | Supplementary product metrics | `adId`, `productId`, additional metrics |
 
-### Step 2: Run the Full Pipeline
+### Step 2: Run the Full Pipeline (Direct `run_pipeline.py` Commands)
+
+**Option 1: Full Pipeline with ClickHouse (Recommended)**
+
+```bash
+# Fetch data from ClickHouse and run full pipeline
+python run_pipeline.py --from-clickhouse --use-staging
+
+# Or with AWS credentials for production:
+python run_pipeline.py --from-clickhouse --aws-profile live
+```
+
+**Alterable parameters for the ClickHouse commands:**
+- `--use-staging` (flag): use staging ClickHouse (no AWS needed)
+- `--aws-profile NAME`: AWS profile for production ClickHouse credentials
+- `--website-id ID`: website ID to process
+- `--start-date YYYY-MM-DD`: start date for metrics
+- `--end-date YYYY-MM-DD`: end date for metrics
+- `--cutoff-date YYYY-MM-DD`: cutoff date for metrics coalescing
+- `--output-dir PATH`: output directory label used in the final summary output path
+
+**Option 2: Full Pipeline with Existing Parquet Files**
+
+If you have the 7 parquet files from the notebook in repo root:
+
+```bash
+python run_pipeline.py --from-parquet
+```
+
+**Alterable parameters for the parquet command:**
+- `--website-id ID`: website ID to process
+- `--start-date YYYY-MM-DD`: start date for metrics
+- `--end-date YYYY-MM-DD`: end date for metrics
+- `--cutoff-date YYYY-MM-DD`: cutoff date for metrics coalescing
+- `--output-dir PATH`: output directory label used in the final summary output path
+
+---
+
+### Alternative: Run the Full Pipeline Directly
 
 ```bash
 python product-matching.py
