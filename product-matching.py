@@ -5,38 +5,48 @@ This script implements the workflow from the understanding-prods-20260122.ipynb 
 to generate the final result tables for product attribution and impression analysis.
 """
 
-import pandas as pd
-import numpy as np
+import importlib
+import importlib.util
 import gc
 import os
 import sys
 from typing import Tuple
 
-# Determine the parent directory to properly import from the product module
+# Validate third-party dependencies before importing them.
+pandas_spec = importlib.util.find_spec("pandas")
+if pandas_spec is None:
+    raise SystemExit(
+        "Missing dependency: pandas. Install it with `pip install pandas` before running this script."
+    )
+
+numpy_spec = importlib.util.find_spec("numpy")
+if numpy_spec is None:
+    raise SystemExit(
+        "Missing dependency: numpy. Install it with `pip install numpy` before running this script."
+    )
+
+pd = importlib.import_module("pandas")
+np = importlib.import_module("numpy")
+
+# Ensure the repository root is on the Python path to import local modules.
 script_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(script_dir)
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 
-# Add the parent directory to the Python path to allow importing from the product module
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-# Import all functions from the product module
-from product import (
-    # Config
-    get_config,
-
-    # Utils
+# Import all functions from local modules.
+from config import get_config
+from utils import (
     get_system_workers_info,
     get_optimal_workers,
     setup_logging,
     memory_monitor,
-
-    # ClickHouse utils
+)
+from clickhouse_utils import (
     initialize_credentials,
     create_clickhouse_client,
     create_clickhouse_client_staging,
-
-    # Data retrieval
+)
+from data_retrieval import (
     get_websites,
     get_latest_ads,
     get_latest_products_and_groups,
@@ -44,31 +54,27 @@ from product import (
     get_raw_metrics,
     get_metrics_by_country,
     get_metrics_by_product,
-
-    # URL processing
+)
+from url_processing import (
     process_destination_urls,
     beautify_urls_parallel,
-
-    # Product processing
+)
+from product_processing import (
     ensure_list,
     to_scalar,
-
-    # Metrics coalescing
+)
+from metrics_coalescing import (
     coalesce_products_base_country_supplement_robust,
     METRICS,
     FULL_GRAIN,
-
-    # Product classification
-    classify_product_id_tokens_parallel,
-
-    # Ad targeting
-    build_targeting,
-
-    # Main product identification
+)
+from product_classification import classify_product_id_tokens_parallel
+from ad_targeting import build_targeting
+from main_product_identifier import (
     identify_main_products,
     identify_main_products_vectorized,
-
-    # Helpers
+)
+from helpers import (
     urldecode_recursive,
     extract_ad_name,
 )
@@ -131,21 +137,21 @@ def load_or_fetch_data(
         df_prod = get_latest_products_and_groups(client, wid)
         df_prod_group = get_latest_product_groups(client, wid)
 
-        df_ads_ori.drop(columns='insertId').to_parquet(parquet_files['df_ads_ori'])
+        df_ads_ori.drop(columns='insertId', errors='ignore').to_parquet(parquet_files['df_ads_ori'])
         df_prod.to_parquet(parquet_files['df_prod'])
         df_prod_group.to_parquet(parquet_files['df_prod_group'])
 
         df_metrics = get_raw_metrics(client, wid, start_date, end_date)
-        df_metrics.drop(columns='insertId').to_parquet(parquet_files['df_metrics'])
+        df_metrics.drop(columns='insertId', errors='ignore').to_parquet(parquet_files['df_metrics'])
         df_metrics_by_country = get_metrics_by_country(client, wid, start_date, end_date)
-        df_metrics_by_country.drop(columns='insertId').to_parquet(parquet_files['df_metrics_by_country'])
+        df_metrics_by_country.drop(columns='insertId', errors='ignore').to_parquet(parquet_files['df_metrics_by_country'])
         df_metrics_by_products = get_metrics_by_product(client, wid, start_date, end_date)
-        df_metrics_by_products.drop(columns='insertId').to_parquet(parquet_files['df_metrics_by_products'])
+        df_metrics_by_products.drop(columns='insertId', errors='ignore').to_parquet(parquet_files['df_metrics_by_products'])
 
     return websites, df_ads_ori, df_prod, df_prod_group, df_metrics, df_metrics_by_country, df_metrics_by_products
 
 
-def process_urls(df_ads_ori: pd.DataFrame, max_workers: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def process_urls(df_ads_ori: pd.DataFrame, max_workers: int) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Process destination URLs to beautify and extract insights.
     
@@ -154,7 +160,7 @@ def process_urls(df_ads_ori: pd.DataFrame, max_workers: int) -> Tuple[pd.DataFra
         max_workers: Number of workers for parallel processing
         
     Returns:
-        Tuple of DataFrames: (df_ads_exploded, df_ads_unique_urls)
+        Tuple of DataFrames: (df_ads_exploded, df_ads_unique_urls, df_ads_exploded_dist)
     """
     print("Processing destination URLs...")
     df_ads_exploded, df_ads_unique_urls = process_destination_urls(
@@ -183,34 +189,6 @@ def process_product_groups(df_prod_group: pd.DataFrame) -> pd.DataFrame:
     print("Processing product groups...")
     df_prod_subset = df_prod_group[['productGroupId', 'collections', 'name', 'url']].copy()
     
-    def ensure_list(x):
-        if x is None or x is pd.NA or (isinstance(x, float) and pd.isna(x)):
-            return []
-        if isinstance(x, list):
-            return x
-        if isinstance(x, (tuple, set)):
-            return list(x)
-        if hasattr(x, "tolist"):  # numpy array
-            try:
-                return x.tolist()
-            except Exception:
-                pass
-        return [x]
-
-    def to_scalar(x):
-        if x is None or x is pd.NA or (isinstance(x, float) and pd.isna(x)):
-            return pd.NA
-        if isinstance(x, (list, tuple)):
-            if len(x) == 1:
-                return to_scalar(x[0])
-            return " | ".join(str(i) for i in x)
-        if hasattr(x, "tolist"):
-            try:
-                return to_scalar(x.tolist())
-            except Exception:
-                return str(x)
-        return str(x)
-
     df_prod_subset["collections_list"] = df_prod_subset["collections"].apply(ensure_list)
     df_prod_subset = df_prod_subset.reset_index(drop=True)
     df_prod_subset["row_id"] = df_prod_subset.index
@@ -446,11 +424,11 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
 
     # Get system info for optimal worker configuration
     worker_info = get_system_workers_info()
-    MAX_WORKERS = worker_info["recommended_io_bound"] - 1
+    MAX_WORKERS = max(1, worker_info["recommended_io_bound"] - 1)
     logging.info(f"Using MAX_WORKERS = {MAX_WORKERS}")
 
     # Check if parquet files exist in the parent directory
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parent_dir = os.path.dirname(os.path.abspath(__file__))
     parquet_files = {
         'websites': os.path.join(parent_dir, 'websites.parquet'),
         'df_ads_ori': os.path.join(parent_dir, 'df_ads_ori.parquet'),
@@ -596,7 +574,7 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
 
     # Get system info for optimal worker configuration
     worker_info = get_system_workers_info()
-    MAX_WORKERS = worker_info["recommended_io_bound"] - 1
+    MAX_WORKERS = max(1, worker_info["recommended_io_bound"] - 1)
     logging.info(f"Using MAX_WORKERS = {MAX_WORKERS}")
 
     # Initialize credentials and create ClickHouse clients
@@ -609,7 +587,7 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
         return
 
     # Load or fetch data
-    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    parent_dir = os.path.dirname(os.path.abspath(__file__))
     websites, df_ads_ori, df_prod, df_prod_group, df_metrics, df_metrics_by_country, df_metrics_by_products = \
         load_or_fetch_data(client, wid=website_id, start_date=start_date, end_date=end_date, parquet_dir=parent_dir)
 
