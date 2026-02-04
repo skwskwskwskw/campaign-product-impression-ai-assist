@@ -78,6 +78,7 @@ from product.helpers import (
     urldecode_recursive,
     extract_ad_name,
 )
+from metric import compute_metrics, write_outputs
 
 
 def load_or_fetch_data(
@@ -230,10 +231,29 @@ def process_product_groups(df_prod_group: pd.DataFrame) -> pd.DataFrame:
     return df_prod_subset_exploded
 
 
+def filter_metrics_by_date(
+    df: pd.DataFrame,
+    start_date: str,
+    end_date: str,
+    timestamp_col: str = "timestamp",
+) -> pd.DataFrame:
+    """Filter metrics DataFrame to a date range using a timestamp column."""
+    if timestamp_col not in df.columns:
+        return df
+
+    ts = pd.to_datetime(df[timestamp_col], errors="coerce")
+    start = pd.to_datetime(start_date)
+    end = pd.to_datetime(end_date)
+    mask = ts.between(start, end, inclusive="both")
+    return df.loc[mask].copy()
+
+
 def coalesce_metrics(
     df_metrics_by_products: pd.DataFrame,
     df_metrics_by_country: pd.DataFrame,
-    cutoff_date: str = "2025-11-01"
+    start_date: str,
+    end_date: str,
+    cutoff_date: str = "2025-11-01",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Coalesce product and country metrics.
@@ -247,16 +267,51 @@ def coalesce_metrics(
         Tuple of DataFrames: (coalesced_df, temp_df)
     """
     import logging
-    logging.info(f"Coalescing metrics with cutoff date: {cutoff_date}")
+    logging.info(
+        "Coalescing metrics with cutoff date: %s and range: %s to %s",
+        cutoff_date,
+        start_date,
+        end_date,
+    )
     cutoff = pd.to_datetime(cutoff_date)
 
+    metrics_by_products = filter_metrics_by_date(df_metrics_by_products, start_date, end_date)
+    metrics_by_country = filter_metrics_by_date(df_metrics_by_country, start_date, end_date)
+
     coalesced_df, temp_df = coalesce_products_base_country_supplement_robust(
-        df_metrics_by_products[df_metrics_by_products.timestamp >= cutoff],
-        df_metrics_by_country[df_metrics_by_country.timestamp >= cutoff],
+        metrics_by_products[metrics_by_products.timestamp >= cutoff],
+        metrics_by_country[metrics_by_country.timestamp >= cutoff],
         include_country_code=False,
     )
 
     return coalesced_df, temp_df
+
+
+def compute_and_save_metrics(
+    coalesced_df: pd.DataFrame,
+    output_dir: str,
+    formats: Tuple[str, ...] = ("csv",),
+    profit_col: str = "conversionsValue",
+) -> None:
+    """
+    Compute and write metric outputs from the coalesced product table.
+
+    Args:
+        coalesced_df: Coalesced metrics table with product attribution flags.
+        output_dir: Directory to store metric outputs.
+        formats: Output formats to write (csv, parquet).
+        profit_col: Column to treat as gross profit / revenue.
+    """
+    if coalesced_df.empty:
+        return
+
+    metrics_result = compute_metrics(coalesced_df, profit_col=profit_col)
+    outputs = {
+        "ad_data": metrics_result.ad_data,
+        "sku_allocation": metrics_result.sku_allocation,
+        "sku_performance": metrics_result.sku_performance,
+    }
+    write_outputs(outputs, output_dir, formats=formats)
 
 
 def enhance_ads_data(
@@ -471,6 +526,10 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
     df_metrics_by_country = df_metrics_by_country[df_metrics_by_country['websiteId'] == website_id] if 'websiteId' in df_metrics_by_country.columns else df_metrics_by_country
     df_metrics_by_products = df_metrics_by_products[df_metrics_by_products['websiteId'] == website_id] if 'websiteId' in df_metrics_by_products.columns else df_metrics_by_products
 
+    df_metrics = filter_metrics_by_date(df_metrics, start_date, end_date)
+    df_metrics_by_country = filter_metrics_by_date(df_metrics_by_country, start_date, end_date)
+    df_metrics_by_products = filter_metrics_by_date(df_metrics_by_products, start_date, end_date)
+
     logging.info(f"Loaded filtered datasets for website {website_id}:")
     logging.info(f"  - websites: {websites.shape}")
     logging.info(f"  - df_ads_ori: {df_ads_ori.shape}")
@@ -488,7 +547,13 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
 
     # Coalesce metrics with specified cutoff date
     logging.info(f"Applying cutoff date {cutoff_date} for metrics coalescing...")
-    coalesced_df, temp_df = coalesce_metrics(df_metrics_by_products, df_metrics_by_country, cutoff_date)
+    coalesced_df, temp_df = coalesce_metrics(
+        df_metrics_by_products,
+        df_metrics_by_country,
+        start_date,
+        end_date,
+        cutoff_date,
+    )
 
     # Enhance ads data
     df_ads_enhanced, df_prod_group_enhanced = enhance_ads_data(
@@ -535,6 +600,9 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
     df_ads_exploded.to_parquet(os.path.join(results_dir, 'df_ads_exploded.parquet'))
     debug_rows.to_parquet(os.path.join(results_dir, 'debug_rows.parquet'))
 
+    metrics_output_dir = os.path.join(results_dir, "metric-output")
+    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv", "parquet"))
+
     logging.info(f"Results saved to {results_dir}/")
     logging.info("Files created:")
     logging.info("  - final_targeting.parquet (main result)")
@@ -542,6 +610,7 @@ def main(start_date: str = "2025-10-01", end_date: str = "2025-12-31", cutoff_da
     logging.info("  - coalesced_df_with_flags.parquet (with main product flags)")
     logging.info("  - df_ads_exploded.parquet")
     logging.info("  - debug_rows.parquet")
+    logging.info("  - metric-output/*.csv")
 
     logging.info("Workflow completed successfully!")
 
@@ -609,7 +678,13 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
 
     # Coalesce metrics with specified cutoff date
     logging.info(f"Applying cutoff date {cutoff_date} for metrics coalescing...")
-    coalesced_df, temp_df = coalesce_metrics(df_metrics_by_products, df_metrics_by_country, cutoff_date)
+    coalesced_df, temp_df = coalesce_metrics(
+        df_metrics_by_products,
+        df_metrics_by_country,
+        start_date,
+        end_date,
+        cutoff_date,
+    )
 
     # Enhance ads data
     df_ads_enhanced, df_prod_group_enhanced = enhance_ads_data(
@@ -656,6 +731,9 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
     df_ads_exploded.to_parquet(os.path.join(results_dir, 'df_ads_exploded.parquet'))
     debug_rows.to_parquet(os.path.join(results_dir, 'debug_rows.parquet'))
 
+    metrics_output_dir = os.path.join(results_dir, "metric-output")
+    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv", "parquet"))
+
     logging.info(f"Results saved to {results_dir}/")
     logging.info("Files created:")
     logging.info("  - final_targeting.parquet (main result)")
@@ -663,6 +741,7 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
     logging.info("  - coalesced_df_with_flags.parquet (with main product flags)")
     logging.info("  - df_ads_exploded.parquet")
     logging.info("  - debug_rows.parquet")
+    logging.info("  - metric-output/*.csv")
 
     logging.info("Workflow completed successfully!")
 
