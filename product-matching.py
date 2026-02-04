@@ -34,19 +34,19 @@ if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
 # Import all functions from local modules.
-from config import get_config
-from utils import (
+from product.config import get_config
+from product.utils import (
     get_system_workers_info,
     get_optimal_workers,
     setup_logging,
     memory_monitor,
 )
-from clickhouse_utils import (
+from product.clickhouse_utils import (
     initialize_credentials,
     create_clickhouse_client,
     create_clickhouse_client_staging,
 )
-from data_retrieval import (
+from product.data_retrieval import (
     get_websites,
     get_latest_ads,
     get_latest_products_and_groups,
@@ -55,26 +55,26 @@ from data_retrieval import (
     get_metrics_by_country,
     get_metrics_by_product,
 )
-from url_processing import (
+from product.url_processing import (
     process_destination_urls,
     beautify_urls_parallel,
 )
-from product_processing import (
+from product.product_processing import (
     ensure_list,
     to_scalar,
 )
-from metrics_coalescing import (
+from product.metrics_coalescing import (
     coalesce_products_base_country_supplement_robust,
     METRICS,
     FULL_GRAIN,
 )
-from product_classification import classify_product_id_tokens_parallel
-from ad_targeting import build_targeting
-from main_product_identifier import (
+from product.product_classification import classify_product_id_tokens_parallel
+from product.ad_targeting import build_targeting
+from product.main_product_identifier import (
     identify_main_products,
     identify_main_products_vectorized,
 )
-from helpers import (
+from product.helpers import (
     urldecode_recursive,
     extract_ad_name,
 )
