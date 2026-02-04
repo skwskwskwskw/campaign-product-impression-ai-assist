@@ -97,6 +97,9 @@ def compute_metrics(
     if "productGroupId" not in df.columns:
         df["productGroupId"] = ""
 
+    if "match_stage" in coalesced_df.columns and "match_stage" not in df.columns:
+        df["match_stage"] = coalesced_df["match_stage"].fillna("unmatched").astype(str)
+
     for id_col in ["platform", "campaignId", "adSetId", "adId", "productId", "productGroupId"]:
         df[id_col] = df[id_col].astype(str)
 
@@ -123,6 +126,7 @@ def compute_metrics(
         "adId",
         "adName",
         "isLead",
+        "match_stage",
     ]
     dims = [d for d in dims if d in df.columns]
 
@@ -193,6 +197,7 @@ def compute_metrics(
         "adId",
         "adName",
         "isLead",
+        "match_stage",
         "sku_weight",
         "share",
         "gross_profit_fair",
@@ -233,6 +238,7 @@ def compute_metrics(
         "adSetName",
         "adId",
         "adName",
+        "match_stage",
         "ad_spend_total",
         "ad_impressions_total",
         "ad_clicks_total",
