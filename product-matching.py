@@ -3,8 +3,24 @@
 Product Matching Script
 This script implements the workflow from the understanding-prods-20260122.ipynb notebook
 to generate the final result tables for product attribution and impression analysis.
+
+Usage:
+    # Fetch data from ClickHouse (staging):
+    python product-matching.py --from-clickhouse --use-staging
+
+    # Fetch data from ClickHouse (production with AWS):
+    python product-matching.py --from-clickhouse --aws-profile live
+
+    # Use existing parquet files in repo root:
+    python product-matching.py --from-parquet
+
+    # Custom date range and website:
+    python product-matching.py --from-clickhouse --use-staging \\
+        --website-id YOUR_WEBSITE_ID \\
+        --start-date 2025-10-01 --end-date 2025-12-31
 """
 
+import argparse
 import importlib
 import importlib.util
 import gc
@@ -746,9 +762,235 @@ def run_with_clickhouse_connection(start_date: str = "2025-10-01", end_date: str
     logging.info("Workflow completed successfully!")
 
 
-if __name__ == "__main__":
-    # By default, run with existing parquet files
-    # To run with ClickHouse connection instead, uncomment the next line:
-    # run_with_clickhouse_connection(start_date="2025-10-01", end_date="2025-12-31", cutoff_date="2025-11-01", website_id='6839260124a2adf314674a5e')
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Product Matching Pipeline - Match ads to products and compute metrics",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Fetch data from ClickHouse staging (no AWS needed):
+  python product-matching.py --from-clickhouse --use-staging
 
-    main(start_date="2025-10-01", end_date="2025-12-31", cutoff_date="2025-11-01", website_id='6839260124a2adf314674a5e')
+  # Fetch data from ClickHouse production (requires AWS):
+  python product-matching.py --from-clickhouse --aws-profile live
+
+  # Use existing parquet files in repo root:
+  python product-matching.py --from-parquet
+
+  # Custom date range:
+  python product-matching.py --from-clickhouse --use-staging \\
+      --start-date 2025-10-01 --end-date 2025-12-31
+
+After running, use the Streamlit app:
+  streamlit run app.py
+  # Then upload results/metric-output/sku_allocation.csv
+        """
+    )
+
+    # Data source
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--from-parquet", action="store_true",
+        help="Load data from existing parquet files in repo root"
+    )
+    source.add_argument(
+        "--from-clickhouse", action="store_true",
+        help="Fetch data from ClickHouse database"
+    )
+
+    # ClickHouse options
+    parser.add_argument(
+        "--use-staging", action="store_true",
+        help="Use staging ClickHouse (no AWS credentials needed)"
+    )
+    parser.add_argument(
+        "--aws-profile", default="live",
+        help="AWS profile for production ClickHouse credentials (default: live)"
+    )
+    parser.add_argument(
+        "--website-id", default="6839260124a2adf314674a5e",
+        help="Website ID to process"
+    )
+    parser.add_argument(
+        "--start-date", default="2025-10-01",
+        help="Start date for metrics (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--end-date", default="2025-12-31",
+        help="End date for metrics (YYYY-MM-DD)"
+    )
+    parser.add_argument(
+        "--cutoff-date", default="2025-11-01",
+        help="Cutoff date for metrics coalescing (YYYY-MM-DD)"
+    )
+
+    return parser.parse_args()
+
+
+def run_with_staging_clickhouse(
+    start_date: str,
+    end_date: str,
+    cutoff_date: str,
+    website_id: str
+):
+    """
+    Entry point that connects to staging ClickHouse (no AWS needed).
+    """
+    # Setup logging
+    config = get_config()
+    log_level = config.get('logging.level', 'INFO')
+    log_format = config.get('logging.format')
+    enable_file_logging = config.get('logging.enable_file_logging', False)
+    log_file = config.get('logging.log_file', 'product_matching.log')
+
+    setup_logging(
+        level=log_level,
+        log_format=log_format,
+        enable_file_logging=enable_file_logging,
+        log_file=log_file
+    )
+
+    import logging
+    logging.info(f"Starting Product Matching with STAGING ClickHouse for website {website_id}")
+    logging.info(f"Date range: {start_date} to {end_date}, cutoff: {cutoff_date}")
+
+    # Get system info for optimal worker configuration
+    worker_info = get_system_workers_info()
+    MAX_WORKERS = max(1, worker_info["recommended_io_bound"] - 1)
+    logging.info(f"Using MAX_WORKERS = {MAX_WORKERS}")
+
+    # Connect to staging ClickHouse directly (no AWS needed)
+    try:
+        import clickhouse_connect
+        client = clickhouse_connect.get_client(
+            host='ue0yeboc3m.ap-southeast-2.aws.clickhouse.cloud',
+            port=8443,
+            secure=True,
+            username='default',
+            password='VnpgEx6jKqMZ_',
+            verify=False,
+            database='profitpeak'
+        )
+        logging.info("Successfully connected to staging ClickHouse")
+    except Exception as e:
+        logging.error(f"Failed to connect to staging ClickHouse: {e}")
+        return
+
+    # Load or fetch data
+    parent_dir = os.path.dirname(os.path.abspath(__file__))
+    websites, df_ads_ori, df_prod, df_prod_group, df_metrics, df_metrics_by_country, df_metrics_by_products = \
+        load_or_fetch_data(client, wid=website_id, start_date=start_date, end_date=end_date, parquet_dir=parent_dir)
+
+    logging.info(f"Loaded datasets for website {website_id}:")
+    logging.info(f"  - websites: {websites.shape}")
+    logging.info(f"  - df_ads_ori: {df_ads_ori.shape}")
+    logging.info(f"  - df_prod: {df_prod.shape}")
+    logging.info(f"  - df_prod_group: {df_prod_group.shape}")
+    logging.info(f"  - df_metrics: {df_metrics.shape}")
+    logging.info(f"  - df_metrics_by_country: {df_metrics_by_country.shape}")
+    logging.info(f"  - df_metrics_by_products: {df_metrics_by_products.shape}")
+
+    # Process destination URLs
+    df_ads_exploded, df_ads_unique_urls, df_ads_exploded_dist = process_urls(df_ads_ori, MAX_WORKERS)
+
+    # Process product groups
+    df_prod_subset_exploded = process_product_groups(df_prod_group)
+
+    # Coalesce metrics with specified cutoff date
+    logging.info(f"Applying cutoff date {cutoff_date} for metrics coalescing...")
+    coalesced_df, temp_df = coalesce_metrics(
+        df_metrics_by_products,
+        df_metrics_by_country,
+        start_date,
+        end_date,
+        cutoff_date,
+    )
+
+    # Enhance ads data
+    df_ads_enhanced, df_prod_group_enhanced = enhance_ads_data(
+        df_ads_ori, df_ads_exploded_dist, df_prod_group, MAX_WORKERS
+    )
+
+    # Classify product IDs
+    coalesced_df = classify_product_ids(coalesced_df, df_prod, MAX_WORKERS)
+
+    # Build final targeting table
+    final_targeting, debug_rows = build_final_targeting(df_ads_enhanced, df_prod_group_enhanced)
+
+    # Identify main products by merging final_targeting with coalesced_df
+    logging.info("Identifying main products by matching campaign IDs and product group IDs...")
+    coalesced_df_with_flags = identify_main_products_vectorized(final_targeting, coalesced_df)
+
+    # Print results
+    logging.info(f"Generated result tables for website {website_id}:")
+    logging.info(f"  - final_targeting: {final_targeting.shape}")
+    logging.info(f"  - coalesced_df: {coalesced_df.shape}")
+    logging.info(f"  - coalesced_df with main product flags: {coalesced_df_with_flags.shape}")
+    logging.info(f"  - df_ads_exploded: {df_ads_exploded.shape}")
+    logging.info(f"  - debug_rows: {debug_rows.shape}")
+
+    # Count how many rows have the main product flag set to 1
+    flagged_count = coalesced_df_with_flags[coalesced_df_with_flags['main_product_flag'] == 1].shape[0]
+    logging.info(f"Number of rows with main_product_flag = 1: {flagged_count}")
+
+    # Save results to parquet files
+    results_dir = os.path.join(parent_dir, 'results')
+    os.makedirs(results_dir, exist_ok=True)
+
+    final_targeting.to_parquet(os.path.join(results_dir, 'final_targeting.parquet'))
+    coalesced_df.to_parquet(os.path.join(results_dir, 'coalesced_df.parquet'))
+    coalesced_df_with_flags.to_parquet(os.path.join(results_dir, 'coalesced_df_with_flags.parquet'))
+    df_ads_exploded.to_parquet(os.path.join(results_dir, 'df_ads_exploded.parquet'))
+    debug_rows.to_parquet(os.path.join(results_dir, 'debug_rows.parquet'))
+
+    metrics_output_dir = os.path.join(results_dir, "metric-output")
+    compute_and_save_metrics(coalesced_df_with_flags, metrics_output_dir, formats=("csv", "parquet"))
+
+    logging.info(f"Results saved to {results_dir}/")
+    logging.info("Files created:")
+    logging.info("  - final_targeting.parquet (main result)")
+    logging.info("  - coalesced_df.parquet")
+    logging.info("  - coalesced_df_with_flags.parquet (with main product flags)")
+    logging.info("  - df_ads_exploded.parquet")
+    logging.info("  - debug_rows.parquet")
+    logging.info("  - metric-output/sku_allocation.csv (FOR STREAMLIT)")
+
+    logging.info("Workflow completed successfully!")
+    print("\n" + "=" * 60)
+    print("PIPELINE COMPLETED")
+    print("=" * 60)
+    print(f"\nNext steps:")
+    print(f"  1. Run: streamlit run app.py")
+    print(f"  2. Upload: results/metric-output/sku_allocation.csv")
+    print("=" * 60)
+
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    if args.from_parquet:
+        # Use existing parquet files
+        main(
+            start_date=args.start_date,
+            end_date=args.end_date,
+            cutoff_date=args.cutoff_date,
+            website_id=args.website_id
+        )
+    elif args.from_clickhouse:
+        if args.use_staging:
+            # Use staging ClickHouse (no AWS needed)
+            run_with_staging_clickhouse(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                cutoff_date=args.cutoff_date,
+                website_id=args.website_id
+            )
+        else:
+            # Use production ClickHouse with AWS credentials
+            run_with_clickhouse_connection(
+                start_date=args.start_date,
+                end_date=args.end_date,
+                cutoff_date=args.cutoff_date,
+                website_id=args.website_id
+            )
