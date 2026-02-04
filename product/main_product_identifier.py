@@ -4,6 +4,16 @@ Functions for identifying main products targeted by campaigns.
 
 import pandas as pd
 import logging
+from typing import Optional
+
+
+def _resolve_product_group_column(coalesced_df: pd.DataFrame) -> Optional[str]:
+    """Return the product group id column name from coalesced_df, if present."""
+    candidates = ("productGroupId_", "productGroupId", "productGroupId_x", "productGroupId_y")
+    for candidate in candidates:
+        if candidate in coalesced_df.columns:
+            return candidate
+    return None
 
 
 def identify_main_products(final_targeting: pd.DataFrame, coalesced_df: pd.DataFrame) -> pd.DataFrame:
@@ -28,6 +38,14 @@ def identify_main_products(final_targeting: pd.DataFrame, coalesced_df: pd.DataF
     
     # Initialize the main_product_flag column to 0
     result_df['main_product_flag'] = 0
+
+    product_group_column = _resolve_product_group_column(result_df)
+    if product_group_column is None:
+        logging.warning(
+            "No product group id column found in coalesced_df. "
+            "Expected one of: productGroupId_, productGroupId, productGroupId_x, productGroupId_y."
+        )
+        return result_df
     
     # Create a mapping from (campaignId, adSetId, adId) to productGroupIds_targeted list
     targeting_map = {}
@@ -41,7 +59,7 @@ def identify_main_products(final_targeting: pd.DataFrame, coalesced_df: pd.DataF
         
         if key in targeting_map:
             targeted_groups = targeting_map[key]
-            product_group_id = row['productGroupId_']
+            product_group_id = row[product_group_column]
             
             # Check if productGroupId_ is in the targeted list
             if product_group_id in targeted_groups:
@@ -70,6 +88,14 @@ def identify_main_products_vectorized(final_targeting: pd.DataFrame, coalesced_d
 
     # Initialize the main_product_flag column to 0
     result_df['main_product_flag'] = 0
+
+    product_group_column = _resolve_product_group_column(result_df)
+    if product_group_column is None:
+        logging.warning(
+            "No product group id column found in coalesced_df. "
+            "Expected one of: productGroupId_, productGroupId, productGroupId_x, productGroupId_y."
+        )
+        return result_df
 
     # Handle empty dataframes
     if final_targeting.empty or coalesced_df.empty:
@@ -101,16 +127,16 @@ def identify_main_products_vectorized(final_targeting: pd.DataFrame, coalesced_d
         exploded_targeting = final_targeting_filtered.explode('productGroupIds_targeted')
         # Remove rows where productGroupIds_targeted became NaN after explode
         exploded_targeting = exploded_targeting[exploded_targeting['productGroupIds_targeted'].notna()].copy()
-        exploded_targeting = exploded_targeting.rename(columns={'productGroupIds_targeted': 'productGroupId_'})
+        exploded_targeting = exploded_targeting.rename(columns={'productGroupIds_targeted': product_group_column})
 
         # Create a temporary identifier for matching
-        targeting_keys = exploded_targeting[['campaignId', 'adSetId', 'adId', 'productGroupId_']].drop_duplicates()
+        targeting_keys = exploded_targeting[['campaignId', 'adSetId', 'adId', product_group_column]].drop_duplicates()
 
         if not targeting_keys.empty:
             # Create a merge key in coalesced_df
             coalesced_with_flag = result_df.merge(
                 targeting_keys,
-                on=['campaignId', 'adSetId', 'adId', 'productGroupId_'],
+                on=['campaignId', 'adSetId', 'adId', product_group_column],
                 how='left',
                 indicator=True
             )
